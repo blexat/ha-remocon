@@ -881,7 +881,16 @@ def test_writes_keep_original_timeout_and_are_not_timed(method, arguments):
     session.request.return_value = http_response()
     client._session = session
     with patch.object(
-        client, "_get_raw", return_value=GOOD_RESPONSE["data"]
+        client, "_get_raw", return_value={
+            "zoneData": {
+                "chComfortTemp": {"value": 21},
+                "chReducedTemp": {"value": 18},
+            },
+            "plantData": {
+                "dhwComfortTemp": {"value": 50},
+                "dhwReducedTemp": {"value": 40},
+            },
+        }
     ), patch(f"{RemoconClient.__module__}.time") as clock:
         getattr(client, method)(**arguments)
 

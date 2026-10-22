@@ -6,6 +6,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from math import isfinite
 from typing import Any, Literal, Optional
 from urllib.parse import quote
 
@@ -568,19 +569,33 @@ class RemoconClient:
             has_room_sensor=value("ZoneMeasuredTemp") is not None,
         )
 
+    @staticmethod
+    def _current_temperature(raw: Any, section: str, key: str) -> float:
+        """Require a finite current setpoint before building a write payload."""
+        section_data = raw.get(section) if isinstance(raw, dict) else None
+        item = section_data.get(key) if isinstance(section_data, dict) else None
+        value = item.get("value") if isinstance(item, dict) else None
+        message = f"Missing or invalid current temperature: {section}.{key}.value"
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise RemoconDataError(message)
+        try:
+            temperature = float(value)
+        except (TypeError, ValueError, OverflowError) as err:
+            raise RemoconDataError(message) from err
+        if not isfinite(temperature):
+            raise RemoconDataError(message)
+        return temperature
+
     def set_zone_temperatures(
         self, comfort: float | None = None, reduced: float | None = None
     ) -> None:
         """Set comfort and/or reduced temperature."""
         raw = self._get_raw()
         self._require_legacy_write_api()
-        if not isinstance(raw, dict):
-            raw = {}
-        zone = raw.get("zoneData") or {}
-        ch_comf = zone.get("chComfortTemp") or {}
-        ch_red = zone.get("chReducedTemp") or {}
-        old_comf = float(ch_comf.get("value", 0))
-        old_econ = float(ch_red.get("value", 0))
+        # Both current setpoints are required by the API's "old" payload,
+        # even when both new temperatures were supplied by the caller.
+        old_comf = self._current_temperature(raw, "zoneData", "chComfortTemp")
+        old_econ = self._current_temperature(raw, "zoneData", "chReducedTemp")
 
         new_comf = comfort if comfort is not None else old_comf
         new_econ = reduced if reduced is not None else old_econ
@@ -616,13 +631,8 @@ class RemoconClient:
         """Set DHW temperatures."""
         raw = self._get_raw()
         self._require_legacy_write_api()
-        if not isinstance(raw, dict):
-            raw = {}
-        plant = raw.get("plantData") or {}
-        dhw_comf = plant.get("dhwComfortTemp") or {}
-        dhw_red = plant.get("dhwReducedTemp") or {}
-        old_comf = float(dhw_comf.get("value", 0))
-        old_econ = float(dhw_red.get("value", 0))
+        old_comf = self._current_temperature(raw, "plantData", "dhwComfortTemp")
+        old_econ = self._current_temperature(raw, "plantData", "dhwReducedTemp")
 
         new_comf = comfort if comfort is not None else old_comf
         new_econ = reduced if reduced is not None else old_econ
